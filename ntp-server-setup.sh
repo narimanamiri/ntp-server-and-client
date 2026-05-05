@@ -28,7 +28,6 @@ choose_timezone() {
       if [[ -n "${choice:-}" ]]; then
         timedatectl set-timezone "$choice"
         echo "Timezone set to: $choice"
-        TZ_CHOSEN="$choice"
         return 0
       fi
       echo "Invalid choice."
@@ -37,14 +36,20 @@ choose_timezone() {
 }
 
 ensure_service_started() {
-  if systemctl list-unit-files | grep -q '^chrony\.service'; then
-    systemctl enable --now chrony
-  elif systemctl list-unit-files | grep -q '^chronyd\.service'; then
-    systemctl enable --now chronyd
-  else
-    echo "chrony service not found."
+  echo "Starting chrony service..."
+
+  systemctl daemon-reload
+
+  systemctl enable chrony
+  systemctl restart chrony
+
+  if ! systemctl is-active --quiet chrony; then
+    echo "❌ chrony failed to start"
+    systemctl status chrony --no-pager
     exit 1
   fi
+
+  echo "✅ chrony is running"
 }
 
 main() {
@@ -53,36 +58,29 @@ main() {
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y chrony
 
+  # Disable default time sync
   systemctl disable --now systemd-timesyncd 2>/dev/null || true
 
   choose_timezone
 
-  local default_cidr
-  default_cidr="$(ip -4 route | awk '/proto kernel/ {print $1; exit}')"
-  [[ -z "${default_cidr:-}" ]] && default_cidr="0.0.0.0/0"
-
-  echo
-  read -rp "Allowed client subnet/CIDR [${default_cidr}]: " ALLOW_CIDR
-  ALLOW_CIDR="${ALLOW_CIDR:-$default_cidr}"
-
+  # Backup config
   local conf="/etc/chrony/chrony.conf"
   local backup="${conf}.bak.$(date +%F_%H%M%S)"
   cp "$conf" "$backup"
 
+  # Remove old allow rules
   sed -i -E '/^[[:space:]]*allow[[:space:]]+/d' "$conf"
-  if ! grep -qE '^[[:space:]]*rtcsync([[:space:]]|$)' "$conf"; then
-    echo "rtcsync" >> "$conf"
-  fi
-  if ! grep -qE '^[[:space:]]*makestep[[:space:]]+' "$conf"; then
-    echo "makestep 1.0 3" >> "$conf"
-  fi
 
-  {
-    echo
-    echo "# Added by setup-ntp-server.sh"
-    echo "allow $ALLOW_CIDR"
-  } >> "$conf"
+  # Ensure required options
+  grep -q "^rtcsync" "$conf" || echo "rtcsync" >> "$conf"
+  grep -q "^makestep" "$conf" || echo "makestep 1.0 3" >> "$conf"
 
+  # 🔥 Allow ALL IPs
+  echo "" >> "$conf"
+  echo "# Allow all clients (public NTP server)" >> "$conf"
+  echo "allow 0.0.0.0/0" >> "$conf"
+
+  # Open firewall
   if command -v ufw >/dev/null 2>&1; then
     ufw allow 123/udp >/dev/null 2>&1 || true
   fi
@@ -91,10 +89,11 @@ main() {
   systemctl restart chrony 2>/dev/null || systemctl restart chronyd 2>/dev/null || true
 
   echo
-  echo "Server setup complete."
+  echo "✅ NTP Server is now PUBLIC"
   echo "Timezone: $(timedatectl show -p Timezone --value)"
-  echo "Allowed clients: $ALLOW_CIDR"
+  echo "Allowed: ALL IPs (0.0.0.0/0)"
   echo
+
   chronyc tracking || true
   chronyc sources -v || true
 }
