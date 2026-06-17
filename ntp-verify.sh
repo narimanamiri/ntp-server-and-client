@@ -8,8 +8,11 @@ if ! command -v chronyc >/dev/null 2>&1; then
   exit 2
 fi
 
+# Capture tracking output once so the report and the sync check stay consistent.
+tracking="$(chronyc tracking 2>/dev/null || true)"
+
 echo "==== chrony tracking ===="
-chronyc tracking || true
+echo "${tracking:-(no tracking output)}"
 echo
 echo "==== chrony sources ===="
 chronyc sources -v || true
@@ -19,7 +22,7 @@ date
 
 echo
 # Leap status "Normal" means the clock is synchronized.
-if chronyc tracking 2>/dev/null | grep -q "Leap status.*Normal"; then
+if printf '%s\n' "$tracking" | grep -q "Leap status.*Normal"; then
   echo "✅ Synchronized"
   exit 0
 else

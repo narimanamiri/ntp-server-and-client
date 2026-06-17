@@ -51,7 +51,12 @@ install_chrony() {
 configure_chrony() {
   local mode="$1"
   local conf="/etc/chrony/chrony.conf"
-  cp "$conf" "${conf}.bak.$(date +%F_%H%M%S)"
+
+  # Back up an existing config only if one is present; on a fresh install the
+  # file should exist, but guard so `set -e` does not abort on a missing file.
+  if [[ -f "$conf" ]]; then
+    cp "$conf" "${conf}.bak.$(date +%F_%H%M%S)"
+  fi
 
   echo "Configuring chrony ($mode mode)..."
 
@@ -67,11 +72,15 @@ allow 0.0.0.0/0
 EOF
 
   if [[ "$mode" == "manual" ]]; then
+    # Offline authoritative server: always serve local time at stratum 10.
     echo "local stratum 10" >> "$conf"
   else
+    # Internet-synced with a local fallback. The `orphan` option keeps `local`
+    # inactive while a real upstream is reachable, so the server only falls
+    # back to its own clock when the pool is unreachable.
     cat >> "$conf" <<EOF
 pool pool.ntp.org iburst
-local stratum 10
+local stratum 10 orphan
 EOF
   fi
 }

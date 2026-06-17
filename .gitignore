@@ -1,0 +1,12 @@
+# Logs and temp files
+*.log
+*.tmp
+
+# Editor / OS cruft
+*~
+*.swp
+.DS_Store
+
+# Generated chrony config backups (in case any are copied here for testing)
+chrony.conf.bak.*
+*.bak
